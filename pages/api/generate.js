@@ -1,104 +1,90 @@
 // pages/api/generate.js
 import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const client = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
-// local captions used as fallback when API quota is hit or any error happens
-function localCaptions(tone = "funny", description = "", imageUrl = "") {
+// Simple local captions for fallback
+function localCaptions(tone = "funny") {
   const bank = {
-    funny: {
-      openers: ["Low effort pic, high effort vibes", "POV:", "Just me being dramatic"],
-      verbs: ["serving", "thriving", "glowing", "winning"],
-      nouns: ["chaos", "main character energy", "good hair day", "golden hour"],
-      tags: ["#LOL", "#Relatable", "#NoFilter", "#VibesOnly", "#JustKidding"]
-    },
-    inspirational: {
-      openers: ["Chasing dreams", "On the journey", "Every step counts"],
-      verbs: ["embracing", "becoming", "growing into", "unlocking"],
-      nouns: ["my potential", "the best version of me", "new horizons", "possibilities"],
-      tags: ["#Motivation", "#Goals", "#Believe", "#PositiveVibes", "#SuccessMindset"]
-    },
-    luxury: {
-      openers: ["Living lavish", "A taste of the good life", "Opulence only"],
-      verbs: ["sipping", "enjoying", "basking in", "owning"],
-      nouns: ["golden sunsets", "rare moments", "first class views", "pure elegance"],
-      tags: ["#LuxuryLife", "#Exclusivity", "#HighEnd", "#VIP", "#FiveStar"]
-    },
-    casual: {
-      openers: ["Just a random Tuesday", "Keeping it chill", "Nothing fancy"],
-      verbs: ["enjoying", "taking in", "relaxing with", "soaking up"],
-      nouns: ["the little things", "the moment", "simple joys", "today's vibes"],
-      tags: ["#Chill", "#EverydayLife", "#GoodTimes", "#SimpleJoys", "#LifeAsItIs"]
-    }
+    funny: [
+      "POV: winning golden hour about this moment. #VibesOnly #LOL #NoFilter",
+      "Just me being dramatic - thriving chaos about this moment. #LOL #Relatable #NoFilter",
+      "Low effort pic, high effort vibes - thriving golden hour about this moment. #VibesOnly #JustKidding #LOL",
+    ],
+    luxury: [
+      "Living lavish - basking in pure elegance. #LuxuryLife #FiveStar #VIP",
+      "Taste of the good life - rare moments only. #HighEnd #Exclusive #Opulence",
+      "Own the view - first class everything. #Premium #GoldStandard #SuiteLife",
+    ],
+    romantic: [
+      "Soft light and softer hearts. #Love #Together #YouAndMe",
+      "Holding on to this moment. #Forever #Soulmates #Warmth",
+      "You, me, and this view. #Romance #DateNight #HeartEyes",
+    ],
+    adventurous: [
+      "Chasing horizons - one step at a time. #Adventure #Explore #Wander",
+      "Wild paths and wide smiles. #TrailLife #OutThere #BucketList",
+      "Built for views like this. #SeekMore #GoFar #NoLimits",
+    ],
   };
-
-  const set = bank[tone] || bank.funny;
-  const subject = description || (imageUrl ? "this moment" : "life");
-
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  const tagStr = () => set.tags.slice().sort(() => 0.5 - Math.random()).slice(0, 3).join(" ");
-
-  return [
-    `${pick(set.openers)} - ${pick(set.verbs)} ${pick(set.nouns)} about ${subject}. ${tagStr()}`,
-    `${pick(set.openers)} - ${pick(set.verbs)} ${pick(set.nouns)} about ${subject}. ${tagStr()}`,
-    `${pick(set.openers)} - ${pick(set.verbs)} ${pick(set.nouns)} about ${subject}. ${tagStr()}`
-  ];
+  return bank[tone] || bank.funny;
 }
 
-function isQuotaError(err) {
-  const status = err?.status || err?.response?.status;
+function isQuota(err) {
+  const s = err?.status || err?.response?.status;
   const msg = (err?.message || err?.response?.data?.error?.message || "").toLowerCase();
   const type = (err?.response?.data?.error?.type || "").toLowerCase();
-  return status === 429 || msg.includes("quota") || type.includes("insufficient_quota");
+  return s === 429 || msg.includes("quota") || type.includes("insufficient_quota");
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { imageUrl = "", description = "", tone = "funny" } = req.body || {};
-  const hasImage = imageUrl.trim().length > 0;
-  const hasText = description.trim().length > 0;
-  if (!hasImage && !hasText) return res.status(400).json({ error: "Provide imageUrl or description" });
+  const { imageUrl = "", tone = "funny" } = req.body || {};
+
+  // No key - use local captions
+  if (!client) {
+    return res.status(200).json({ captions: localCaptions(tone), demo: true });
+  }
 
   try {
-    const messages = hasImage
-      ? [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: `Write 3 short social captions in a ${tone} tone for this image. Include 3 to 5 relevant hashtags. One caption per line.` },
-              { type: "image_url", image_url: { url: imageUrl } }
-            ]
-          }
-        ]
-      : [
-          {
-            role: "user",
-            content: `Write 3 short social captions in a ${tone} tone for: "${description}". Include 3 to 5 relevant hashtags. One caption per line.`
-          }
-        ];
+    // Build messages for image based captioning
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `Write 3 short social captions in a ${tone} tone for this image. Include 3 to 5 relevant hashtags. One caption per line.` },
+          ...(imageUrl
+            ? [{ type: "image_url", image_url: { url: imageUrl } }]
+            : [{ type: "text", text: "No image provided - describe something scenic." }]),
+        ],
+      },
+    ];
 
     const r = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
-      temperature: 0.8
+      temperature: 0.8,
     });
 
     const text = r.choices?.[0]?.message?.content || "";
+    const lines = text
+      .split("\n")
+      .map((l) => l.replace(/^\s*[\-\*\d\.\)]\s*/, "").trim())
+      .filter(Boolean);
 
-    if (!text.trim()) {
-      const captions = localCaptions(tone, description, imageUrl).join("\n");
-      return res.status(200).json({ captions, demo: true, note: "Local fallback used - empty API response" });
+    // If API returned nothing, fall back
+    if (!lines.length) {
+      return res.status(200).json({ captions: localCaptions(tone), demo: true });
     }
 
-    return res.status(200).json({ captions: text, demo: false });
+    return res.status(200).json({ captions: lines, demo: false });
   } catch (err) {
-    // quota or any other error - still return captions so UI never breaks
-    const captions = localCaptions(tone, description, imageUrl).join("\n");
-    const note = isQuotaError(err)
-      ? "Local fallback used - API quota"
-      : "Local fallback used - API error";
     console.error("OpenAI error:", err);
-    return res.status(200).json({ captions, demo: true, note });
+    // Quota or any error - still return captions so UI keeps working
+    if (isQuota(err)) return res.status(200).json({ captions: localCaptions(tone), demo: true });
+    return res.status(200).json({ captions: localCaptions(tone), demo: true });
   }
 }
