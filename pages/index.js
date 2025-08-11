@@ -12,7 +12,9 @@ const saveHistory = (items) => {
 };
 
 export default function Home() {
+  const [mode, setMode] = useState("image"); // "image" or "text"
   const [imageUrl, setImageUrl] = useState("");
+  const [description, setDescription] = useState("");
   const [tone, setTone] = useState("funny");
   const [captions, setCaptions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -28,10 +30,14 @@ export default function Home() {
     setCaptions([]);
     setDemoUsed(false);
     try {
+      const body = mode === "image"
+        ? { imageUrl, tone }
+        : { description, tone };
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl, tone })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
@@ -46,11 +52,22 @@ export default function Home() {
   }
 
   function addToHistory(caption) {
-    const item = { id: crypto.randomUUID(), createdAt: Date.now(), imageUrl, tone, caption };
+    const item = {
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      mode,
+      imageUrl: mode === "image" ? imageUrl : "",
+      description: mode === "text" ? description : "",
+      tone,
+      caption
+    };
     const next = [item, ...history].slice(0, 200);
     setHistory(next);
     saveHistory(next);
   }
+
+  const canGenerate =
+    mode === "image" ? !!imageUrl.trim() : !!description.trim();
 
   return (
     <div style={{ maxWidth: 720, margin: "40px auto", padding: 16, fontFamily: "sans-serif" }}>
@@ -59,18 +76,35 @@ export default function Home() {
         <Link href="/history"><button>History</button></Link>
       </header>
 
-      <input
-        type="url"
-        placeholder="Paste a direct image URL ending with .jpg or .png"
-        value={imageUrl}
-        onChange={(e) => setImageUrl(e.target.value)}
-        style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 8, marginTop: 12 }}
-      />
+      {/* Mode toggle */}
+      <div style={{ marginTop: 12, display: "flex", gap: 16 }}>
+        <label><input type="radio" name="mode" value="image" checked={mode === "image"} onChange={() => setMode("image")} /> Image URL</label>
+        <label><input type="radio" name="mode" value="text" checked={mode === "text"} onChange={() => setMode("text")} /> Text description</label>
+      </div>
 
-      {imageUrl && (
-        <div style={{ marginTop: 12 }}>
-          <img src={imageUrl} alt="preview" style={{ maxWidth: "100%", borderRadius: 8 }} />
-        </div>
+      {mode === "image" ? (
+        <>
+          <input
+            type="url"
+            placeholder="Paste a direct image URL ending with .jpg or .png"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 8, marginTop: 12 }}
+          />
+          {imageUrl && (
+            <div style={{ marginTop: 12 }}>
+              <img src={imageUrl} alt="preview" style={{ maxWidth: "100%", borderRadius: 8 }} />
+            </div>
+          )}
+        </>
+      ) : (
+        <textarea
+          rows={4}
+          placeholder="Describe your photo or video"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 8, marginTop: 12 }}
+        />
       )}
 
       <div style={{ marginTop: 8 }}>
@@ -83,7 +117,7 @@ export default function Home() {
         </select>
       </div>
 
-      <button onClick={generate} disabled={loading || !imageUrl} style={{ marginTop: 12, padding: "10px 16px", borderRadius: 8 }}>
+      <button onClick={generate} disabled={loading || !canGenerate} style={{ marginTop: 12, padding: "10px 16px", borderRadius: 8 }}>
         {loading ? "Generating..." : "Generate Caption"}
       </button>
 
