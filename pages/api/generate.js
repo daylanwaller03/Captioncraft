@@ -1,38 +1,34 @@
-import { openai } from "../../lib/openai";
-import { supabase } from "../../lib/supabase";
-import { getServerSession } from "next-auth";
+import OpenAI from "openai";
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const session = await getServerSession(req, res);
-  if (!session) return res.status(401).json({ error: "Unauthorized" });
+  const { imageUrl = "", tone = "funny" } = req.body || {};
+  if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: "Missing OPENAI_API_KEY" });
+  if (!imageUrl.trim()) return res.status(400).json({ error: "Missing imageUrl" });
 
-  const { description, tone } = req.body;
+  try {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `Write 3 short social captions in a ${tone} tone for this image. Include 3 to 5 relevant hashtags. Return one caption per line.` },
+          { type: "image_url", image_url: { url: imageUrl } }
+        ]
+      }
+    ];
 
-  // Track usage for free tier
-  const { data: user } = await supabase
-    .from("users")
-    .select("usage_count, plan")
-    .eq("id", session.user.id)
-    .single();
+    const r = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.8
+    });
 
-  if (user.plan === "free" && user.usage_count >= 5) {
-    return res.status(403).json({ error: "Free tier limit reached" });
+    const text = r.choices?.[0]?.message?.content || "";
+    res.status(200).json({ captions: text });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
-
-  const prompt = `Generate 3 catchy social media captions in a ${tone} tone for this: ${description}. Include 5 relevant hashtags.`;
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.8
-  });
-
-  await supabase
-    .from("users")
-    .update({ usage_count: user.usage_count + 1 })
-    .eq("id", session.user.id);
-
-  res.status(200).json({ captions: completion.choices[0].message.content });
 }
